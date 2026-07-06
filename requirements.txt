@@ -1,4 +1,5 @@
+runpod
 rembg
 Pillow
 onnxruntime
-runpod
+requests
