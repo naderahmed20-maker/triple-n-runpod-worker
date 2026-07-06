@@ -1,6 +1,5 @@
 import base64
 import io
-import requests
 from PIL import Image
 from rembg import remove
 
@@ -10,19 +9,21 @@ MAX_IMAGE_SIZE_MB = 12
 def handler(job):
     try:
         job_input = job.get("input", {})
-        image_url = job_input.get("image") or job_input.get("imageUrl")
+        image_base64 = job_input.get("imageBase64")
 
-        if not image_url:
-            return {"success": False, "error": "image is required"}
+        if not image_base64:
+            return {"success": False, "error": "imageBase64 is required"}
 
-        response = requests.get(image_url, timeout=45)
-        response.raise_for_status()
+        if image_base64.startswith("data:image"):
+            image_base64 = image_base64.split(",", 1)[1]
 
-        size_mb = len(response.content) / (1024 * 1024)
+        image_bytes = base64.b64decode(image_base64)
+
+        size_mb = len(image_bytes) / (1024 * 1024)
         if size_mb > MAX_IMAGE_SIZE_MB:
             return {"success": False, "error": "image too large"}
 
-        input_image = Image.open(io.BytesIO(response.content)).convert("RGBA")
+        input_image = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
         output = remove(input_image)
 
         buffer = io.BytesIO()
