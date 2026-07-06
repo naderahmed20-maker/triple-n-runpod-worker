@@ -1,5 +1,5 @@
-runpod
-rembg
-Pillow
-onnxruntime
-requests
+runpod==1.7.13
+rembg==2.0.67
+Pillow==10.4.0
+onnxruntime==1.19.2
+requests==2.32.3
