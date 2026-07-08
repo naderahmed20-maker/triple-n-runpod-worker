@@ -102,7 +102,6 @@ def remove_background(image):
 
     return rgba
 
-
 def crop_transparent(image):
     alpha = image.getchannel("A")
     bbox = alpha.getbbox()
@@ -110,7 +109,18 @@ def crop_transparent(image):
     if not bbox:
         return image
 
-    return image.crop(bbox)
+    left, top, right, bottom = bbox
+
+    # شيل الشماعة من فوق
+    top += 35
+
+    # شيل الخط المعدني من تحت
+    bottom -= 25
+
+    # حماية لو المقاس بقى غلط
+    top = min(top, bottom - 1)
+
+    return image.crop((left, top, right, bottom))
 
 
 def fit_on_canvas(image):
