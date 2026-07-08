@@ -1,19 +1,43 @@
 import base64
 import io
+import torch
 from PIL import Image
-from rembg import remove, new_session
+from transformers import AutoModelForImageSegmentation
+from torchvision import transforms
 
-MAX_IMAGE_SIZE_MB = 8
-INPUT_MAX_SIZE = 768
+MAX_IMAGE_SIZE_MB = 12
+MODEL_INPUT_SIZE = 1024
 CANVAS_SIZE = 1024
-ITEM_MAX_SIZE = 860
+ITEM_MAX_SIZE = 900
 
-# الموديل يتحمل مرة واحدة بس
-session = new_session("u2net")
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+print("Loading BiRefNet on:", DEVICE)
+
+model = AutoModelForImageSegmentation.from_pretrained(
+    "ZhengPeng7/BiRefNet",
+    trust_remote_code=True
+)
+
+model.to(DEVICE)
+model.eval()
+
+transform_image = transforms.Compose([
+    transforms.Resize((MODEL_INPUT_SIZE, MODEL_INPUT_SIZE)),
+    transforms.ToTensor(),
+    transforms.Normalize(
+        mean=[0.485, 0.456, 0.406],
+        std=[0.229, 0.224, 0.225],
+    ),
+])
 
 
 def get_image_data(job_input):
-    return job_input.get("imageBase64") or job_input.get("image") or job_input.get("base64")
+    return (
+        job_input.get("imageBase64")
+        or job_input.get("image")
+        or job_input.get("base64")
+    )
 
 
 def strip_data_url(image_data):
@@ -22,22 +46,41 @@ def strip_data_url(image_data):
     return image_data
 
 
-def resize_before_remove(image):
-    w, h = image.size
-    biggest = max(w, h)
+def get_prediction(output):
+    if isinstance(output, (list, tuple)):
+        pred = output[-1]
+    else:
+        pred = output
 
-    if biggest <= INPUT_MAX_SIZE:
-        return image
+    if isinstance(pred, (list, tuple)):
+        pred = pred[-1]
 
-    scale = INPUT_MAX_SIZE / biggest
-    new_w = int(w * scale)
-    new_h = int(h * scale)
+    return pred
 
-    return image.resize((new_w, new_h), Image.LANCZOS)
+
+def remove_background(image):
+    original_size = image.size
+
+    input_tensor = transform_image(image).unsqueeze(0).to(DEVICE)
+
+    with torch.no_grad():
+        output = model(input_tensor)
+        pred = get_prediction(output)
+        pred = torch.sigmoid(pred)
+        pred = pred.squeeze().detach().cpu()
+
+    mask = transforms.ToPILImage()(pred)
+    mask = mask.resize(original_size, Image.LANCZOS)
+
+    rgba = image.convert("RGBA")
+    rgba.putalpha(mask)
+
+    return rgba
 
 
 def crop_transparent(image):
-    bbox = image.getbbox()
+    alpha = image.getchannel("A")
+    bbox = alpha.getbbox()
     if not bbox:
         return image
     return image.crop(bbox)
@@ -86,19 +129,11 @@ def handler(job):
             }
 
         input_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        input_image = resize_before_remove(input_image)
 
-        removed = remove(
-            input_image,
-            session=session,
-            alpha_matting=False
-        )
-
+        removed = remove_background(input_image)
         cleaned = fit_on_canvas(removed)
 
         buffer = io.BytesIO()
-
-        # optimize=True بيبطّأ، شيلناه عشان السرعة
         cleaned.save(buffer, format="PNG", compress_level=1)
 
         encoded = base64.b64encode(buffer.getvalue()).decode("utf-8")
