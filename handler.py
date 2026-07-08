@@ -1,5 +1,8 @@
 import base64
 import io
+
+import cv2
+import numpy as np
 import torch
 from PIL import Image
 from transformers import AutoModelForImageSegmentation
@@ -58,6 +61,27 @@ def get_prediction(output):
     return pred
 
 
+def refine_mask(mask):
+    mask_np = np.array(mask).astype(np.uint8)
+
+    _, mask_np = cv2.threshold(mask_np, 120, 255, cv2.THRESH_BINARY)
+
+    kernel = np.ones((5, 5), np.uint8)
+
+    mask_np = cv2.morphologyEx(mask_np, cv2.MORPH_OPEN, kernel)
+    mask_np = cv2.morphologyEx(mask_np, cv2.MORPH_CLOSE, kernel)
+
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask_np, 8)
+
+    if num_labels > 1:
+        largest = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
+        mask_np = np.where(labels == largest, 255, 0).astype(np.uint8)
+
+    mask_np = cv2.GaussianBlur(mask_np, (5, 5), 0)
+
+    return Image.fromarray(mask_np)
+
+
 def remove_background(image):
     original_size = image.size
 
@@ -71,6 +95,7 @@ def remove_background(image):
 
     mask = transforms.ToPILImage()(pred)
     mask = mask.resize(original_size, Image.LANCZOS)
+    mask = refine_mask(mask)
 
     rgba = image.convert("RGBA")
     rgba.putalpha(mask)
@@ -81,8 +106,10 @@ def remove_background(image):
 def crop_transparent(image):
     alpha = image.getchannel("A")
     bbox = alpha.getbbox()
+
     if not bbox:
         return image
+
     return image.crop(bbox)
 
 
@@ -122,6 +149,7 @@ def handler(job):
         image_bytes = base64.b64decode(image_data)
 
         size_mb = len(image_bytes) / (1024 * 1024)
+
         if size_mb > MAX_IMAGE_SIZE_MB:
             return {
                 "success": False,
