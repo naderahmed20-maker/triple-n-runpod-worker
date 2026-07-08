@@ -11,7 +11,19 @@ from torchvision import transforms
 MAX_IMAGE_SIZE_MB = 12
 MODEL_INPUT_SIZE = 1024
 CANVAS_SIZE = 1024
-ITEM_MAX_SIZE = 900
+
+CATEGORY_SIZE = {
+    "Tops": 770,
+    "Pants": 930,
+    "Shorts": 700,
+    "Shoes": 540,
+    "Jackets": 860,
+    "Dresses": 930,
+    "Skirts": 760,
+    "Accessories": 260,
+}
+
+DEFAULT_ITEM_SIZE = 850
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -47,6 +59,28 @@ def strip_data_url(image_data):
     if "," in image_data:
         return image_data.split(",", 1)[1]
     return image_data
+
+
+def normalize_category(category):
+    if not category:
+        return "Tops"
+
+    if category in ["Top", "T-Shirt", "TShirt", "Shirt", "Hoodie", "Sweater", "Polo"]:
+        return "Tops"
+
+    if category in ["Pant", "Bottom", "Bottoms", "Jeans", "Cargo", "Formal", "Joggers"]:
+        return "Pants"
+
+    if category in ["Jacket", "Coat"]:
+        return "Jackets"
+
+    if category in ["Shoe", "Sneakers", "Boots", "Loafers", "Sandals", "Heels"]:
+        return "Shoes"
+
+    if category in ["Accessory", "Watch", "Glasses", "Cap", "Bag", "Other"]:
+        return "Accessories"
+
+    return category
 
 
 def get_prediction(output):
@@ -87,7 +121,7 @@ def remove_background(image):
 
     input_tensor = transform_image(image).unsqueeze(0).to(DEVICE)
 
-    with torch.no_grad():
+    with torch.inference_mode():
         output = model(input_tensor)
         pred = get_prediction(output)
         pred = torch.sigmoid(pred)
@@ -102,7 +136,8 @@ def remove_background(image):
 
     return rgba
 
-def crop_transparent(image):
+
+def crop_transparent(image, category):
     alpha = image.getchannel("A")
     bbox = alpha.getbbox()
 
@@ -111,23 +146,37 @@ def crop_transparent(image):
 
     left, top, right, bottom = bbox
 
-    # شيل الشماعة من فوق
-    top += 35
+    if category in ["Tops", "Jackets"]:
+        top += 35
+        bottom -= 25
+    elif category == "Shoes":
+        top += 10
+        bottom -= 10
+    else:
+        top += 15
+        bottom -= 15
 
-    # شيل الخط المعدني من تحت
-    bottom -= 25
+    top = max(0, top)
+    bottom = min(image.height, bottom)
 
-    # حماية لو المقاس بقى غلط
-    top = min(top, bottom - 1)
+    if bottom <= top:
+        top, bottom = bbox[1], bbox[3]
 
     return image.crop((left, top, right, bottom))
 
 
-def fit_on_canvas(image):
-    image = crop_transparent(image)
+def fit_on_canvas(image, category):
+    category = normalize_category(category)
+    image = crop_transparent(image, category)
 
     w, h = image.size
-    scale = min(ITEM_MAX_SIZE / w, ITEM_MAX_SIZE / h)
+
+    if w == 0 or h == 0:
+        return Image.new("RGBA", (CANVAS_SIZE, CANVAS_SIZE), (0, 0, 0, 0))
+
+    target_size = CATEGORY_SIZE.get(category, DEFAULT_ITEM_SIZE)
+
+    scale = min(target_size / w, target_size / h)
 
     new_w = max(1, int(w * scale))
     new_h = max(1, int(h * scale))
@@ -148,6 +197,7 @@ def handler(job):
     try:
         job_input = job.get("input", {})
         image_data = get_image_data(job_input)
+        category = normalize_category(job_input.get("category", "Tops"))
 
         if not image_data:
             return {
@@ -169,7 +219,7 @@ def handler(job):
         input_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
 
         removed = remove_background(input_image)
-        cleaned = fit_on_canvas(removed)
+        cleaned = fit_on_canvas(removed, category)
 
         buffer = io.BytesIO()
         cleaned.save(buffer, format="PNG", compress_level=1)
@@ -178,6 +228,7 @@ def handler(job):
 
         return {
             "success": True,
+            "category": category,
             "image": f"data:image/png;base64,{encoded}"
         }
 
