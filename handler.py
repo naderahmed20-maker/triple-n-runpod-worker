@@ -4,9 +4,9 @@ from PIL import Image
 from rembg import remove, new_session
 
 MAX_IMAGE_SIZE_MB = 8
-INPUT_MAX_SIZE = 896
+INPUT_MAX_SIZE = 768
 CANVAS_SIZE = 1024
-ITEM_MAX_SIZE = 900
+ITEM_MAX_SIZE = 860
 
 # الموديل يتحمل مرة واحدة بس
 session = new_session("u2net")
