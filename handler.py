@@ -13,17 +13,17 @@ MODEL_INPUT_SIZE = 1024
 CANVAS_SIZE = 1024
 
 CATEGORY_SIZE = {
-    "Tops": 770,
-    "Pants": 930,
-    "Shorts": 700,
-    "Shoes": 540,
-    "Jackets": 860,
-    "Dresses": 930,
-    "Skirts": 760,
-    "Accessories": 260,
+    "Tops": 900,
+    "Pants": 960,
+    "Shorts": 900,
+    "Shoes": 760,
+    "Jackets": 930,
+    "Dresses": 960,
+    "Skirts": 900,
+    "Accessories": 650,
 }
 
-DEFAULT_ITEM_SIZE = 850
+DEFAULT_ITEM_SIZE = 900
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -64,6 +64,8 @@ def strip_data_url(image_data):
 def normalize_category(category):
     if not category:
         return "Tops"
+
+    category = str(category).strip()
 
     if category in ["Top", "T-Shirt", "TShirt", "Shirt", "Hoodie", "Sweater", "Polo"]:
         return "Tops"
@@ -138,6 +140,8 @@ def remove_background(image):
 
 
 def crop_transparent(image, category):
+    image = image.convert("RGBA")
+
     alpha = image.getchannel("A")
     bbox = alpha.getbbox()
 
@@ -146,21 +150,16 @@ def crop_transparent(image, category):
 
     left, top, right, bottom = bbox
 
-    if category in ["Tops", "Jackets"]:
-        top += 35
-        bottom -= 25
-    elif category == "Shoes":
-        top += 10
-        bottom -= 10
-    else:
-        top += 15
-        bottom -= 15
+    item_w = right - left
+    item_h = bottom - top
 
-    top = max(0, top)
-    bottom = min(image.height, bottom)
+    pad_x = int(item_w * 0.03)
+    pad_y = int(item_h * 0.03)
 
-    if bottom <= top:
-        top, bottom = bbox[1], bbox[3]
+    left = max(0, left - pad_x)
+    top = max(0, top - pad_y)
+    right = min(image.width, right + pad_x)
+    bottom = min(image.height, bottom + pad_y)
 
     return image.crop((left, top, right, bottom))
 
@@ -171,7 +170,7 @@ def fit_on_canvas(image, category):
 
     w, h = image.size
 
-    if w == 0 or h == 0:
+    if w <= 0 or h <= 0:
         return Image.new("RGBA", (CANVAS_SIZE, CANVAS_SIZE), (0, 0, 0, 0))
 
     target_size = CATEGORY_SIZE.get(category, DEFAULT_ITEM_SIZE)
@@ -193,9 +192,17 @@ def fit_on_canvas(image, category):
     return canvas
 
 
+def encode_png(image):
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG", compress_level=1)
+    encoded = base64.b64encode(buffer.getvalue()).decode("utf-8")
+    return f"data:image/png;base64,{encoded}"
+
+
 def handler(job):
     try:
         job_input = job.get("input", {})
+
         image_data = get_image_data(job_input)
         category = normalize_category(job_input.get("category", "Tops"))
 
@@ -221,15 +228,10 @@ def handler(job):
         removed = remove_background(input_image)
         cleaned = fit_on_canvas(removed, category)
 
-        buffer = io.BytesIO()
-        cleaned.save(buffer, format="PNG", compress_level=1)
-
-        encoded = base64.b64encode(buffer.getvalue()).decode("utf-8")
-
         return {
             "success": True,
             "category": category,
-            "image": f"data:image/png;base64,{encoded}"
+            "image": encode_png(cleaned)
         }
 
     except Exception as e:
