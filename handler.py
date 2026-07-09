@@ -13,17 +13,15 @@ MODEL_INPUT_SIZE = 1024
 CANVAS_SIZE = 1024
 
 CATEGORY_SIZE = {
-    "Tops": 900,
-    "Pants": 960,
+    "Tops": 930,
+    "Pants": 980,
     "Shorts": 900,
-    "Shoes": 760,
-    "Jackets": 930,
-    "Dresses": 960,
-    "Skirts": 900,
-    "Accessories": 650,
+    "Shoes": 780,
+    "Jackets": 950,
+    "Accessories": 700,
 }
 
-DEFAULT_ITEM_SIZE = 900
+DEFAULT_ITEM_SIZE = 920
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -62,50 +60,67 @@ def strip_data_url(image_data):
 
 
 def normalize_category(category):
-    if not category:
-        return "Tops"
+    category = str(category or "Tops").strip()
 
-    category = str(category).strip()
+    mapping = {
+        "Top": "Tops",
+        "T-Shirt": "Tops",
+        "TShirt": "Tops",
+        "Shirt": "Tops",
+        "Hoodie": "Tops",
+        "Sweater": "Tops",
+        "Polo": "Tops",
 
-    if category in ["Top", "T-Shirt", "TShirt", "Shirt", "Hoodie", "Sweater", "Polo"]:
-        return "Tops"
+        "Pant": "Pants",
+        "Bottom": "Pants",
+        "Bottoms": "Pants",
+        "Jeans": "Pants",
+        "Cargo": "Pants",
+        "Formal": "Pants",
+        "Joggers": "Pants",
 
-    if category in ["Pant", "Bottom", "Bottoms", "Jeans", "Cargo", "Formal", "Joggers"]:
-        return "Pants"
+        "Short": "Shorts",
 
-    if category in ["Jacket", "Coat"]:
-        return "Jackets"
+        "Shoe": "Shoes",
+        "Sneakers": "Shoes",
+        "Boots": "Shoes",
+        "Loafers": "Shoes",
+        "Sandals": "Shoes",
+        "Heels": "Shoes",
 
-    if category in ["Shoe", "Sneakers", "Boots", "Loafers", "Sandals", "Heels"]:
-        return "Shoes"
+        "Jacket": "Jackets",
+        "Coat": "Jackets",
 
-    if category in ["Accessory", "Watch", "Glasses", "Cap", "Bag", "Other"]:
-        return "Accessories"
+        "Accessory": "Accessories",
+        "Watch": "Accessories",
+        "Glasses": "Accessories",
+        "Cap": "Accessories",
+        "Bag": "Accessories",
+        "Other": "Accessories",
+    }
 
-    return category
+    return mapping.get(category, category)
 
 
 def get_prediction(output):
     if isinstance(output, (list, tuple)):
-        pred = output[-1]
-    else:
-        pred = output
+        output = output[-1]
 
-    if isinstance(pred, (list, tuple)):
-        pred = pred[-1]
+    if isinstance(output, (list, tuple)):
+        output = output[-1]
 
-    return pred
+    return output
 
 
 def refine_mask(mask):
     mask_np = np.array(mask).astype(np.uint8)
 
-    _, mask_np = cv2.threshold(mask_np, 120, 255, cv2.THRESH_BINARY)
+    _, mask_np = cv2.threshold(mask_np, 110, 255, cv2.THRESH_BINARY)
 
     kernel = np.ones((5, 5), np.uint8)
 
-    mask_np = cv2.morphologyEx(mask_np, cv2.MORPH_OPEN, kernel)
     mask_np = cv2.morphologyEx(mask_np, cv2.MORPH_CLOSE, kernel)
+    mask_np = cv2.morphologyEx(mask_np, cv2.MORPH_OPEN, kernel)
 
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask_np, 8)
 
@@ -139,9 +154,8 @@ def remove_background(image):
     return rgba
 
 
-def crop_transparent(image, category):
+def crop_transparent(image):
     image = image.convert("RGBA")
-
     alpha = image.getchannel("A")
     bbox = alpha.getbbox()
 
@@ -153,8 +167,8 @@ def crop_transparent(image, category):
     item_w = right - left
     item_h = bottom - top
 
-    pad_x = int(item_w * 0.03)
-    pad_y = int(item_h * 0.03)
+    pad_x = int(item_w * 0.025)
+    pad_y = int(item_h * 0.025)
 
     left = max(0, left - pad_x)
     top = max(0, top - pad_y)
@@ -166,7 +180,7 @@ def crop_transparent(image, category):
 
 def fit_on_canvas(image, category):
     category = normalize_category(category)
-    image = crop_transparent(image, category)
+    image = crop_transparent(image)
 
     w, h = image.size
 
